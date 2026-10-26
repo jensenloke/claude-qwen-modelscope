@@ -11,6 +11,10 @@ ModelScope user ID and Luma registration email. It states a submission deadline
 of **2 November 2026, 23:59** (timezone is not specified in the form).
 Your API key stays on your computer; the form needs no API key.
 
+Sharing the setup at a meetup? Download the **[repository QR (SVG)](assets/repository-qr.svg)**
+or **[PNG](assets/repository-qr.png)**. It points to this public GitHub repository;
+the registration form has its own separate QR in the talk.
+
 ## What is included
 
 | Feature | How |
