@@ -99,8 +99,12 @@ def setup(args):
         env = settings.setdefault("env", {})
         for name in (*SECRET_ENV, "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
             env.pop(name, None)
-        env.update({"ANTHROPIC_MODEL": options.model, "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(options.context),
-                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192" if index == 0 else "16384",
+        # The gateway rejects inputs longer than the window minus max_tokens
+        # (1M model -> 983,616 input cap at a 16,384 output cap), so the client
+        # window must shrink by the same reserve or compaction starts too late.
+        output_cap = 8192 if index == 0 else 16384
+        env.update({"ANTHROPIC_MODEL": options.model, "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(options.context - output_cap),
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(output_cap),
                     "CLAUDE_CODE_EXTRA_BODY": json.dumps({"thinking": {"type": "disabled"} if index == 0 else {"type": "enabled", "budget_tokens": 4096}}, separators=(",", ":"))})
         for family in ("OPUS", "SONNET", "HAIKU"):
             env["ANTHROPIC_DEFAULT_" + family + "_MODEL"] = options.model

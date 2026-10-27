@@ -23,6 +23,11 @@ from protocol import ProtocolError, StreamRepair, normalize_message, sse_events
 
 UPSTREAM = "https://api-inference.modelscope.ai"
 MAX_BODY = 64 * 1024 * 1024
+# Base64 chars per image block. One full-resolution screenshot (~250 KB binary,
+# ~340K base64 chars) costs well over 100K input tokens and can push a request
+# past the gateway's input cap, which kills the session; a downscaled JPEG
+# (~90 KB binary) passes. Oversized images become explicit placeholders.
+MAX_IMAGE_CHARS = 120_000
 SAFE_HEADERS = {"retry-after", "request-id", "x-request-id", "x-should-retry"}
 
 
@@ -36,6 +41,7 @@ class Config:
     total_timeout: float = 900
     client_timeout: float = 15
     max_body: int = MAX_BODY
+    max_image_chars: int = MAX_IMAGE_CHARS
     max_connections: int = 16
 
 
@@ -46,6 +52,28 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def encode(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def limit_images(value, max_chars):
+    """Replace oversized base64 image blocks with an explicit text placeholder.
+
+    Walks the whole request payload; the standard library cannot re-encode
+    images, so elision with instructions to downscale is the only safe bound.
+    """
+    if isinstance(value, dict):
+        source = value.get("source")
+        if (value.get("type") == "image" and isinstance(source, dict)
+                and isinstance(source.get("data"), str) and len(source["data"]) > max_chars):
+            return {"type": "text",
+                    "text": ("[claude-qwen adapter: image elided, " + format(len(source["data"]), ",")
+                             + " base64 chars exceeds the " + format(max_chars, ",")
+                             + "-char per-image budget and would risk the gateway input limit."
+                             " Downscale it first (macOS: sips -Z 1024 -s format jpeg in.png --out out.jpg),"
+                             " then read the smaller file.]")}
+        return {key: limit_images(item, max_chars) for key, item in value.items()}
+    if isinstance(value, list):
+        return [limit_images(item, max_chars) for item in value]
+    return value
 
 
 @contextmanager
@@ -272,6 +300,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.error(413, "invalid_request_error", "Local request exceeded the 64 MiB body limit")
             except (ValueError, zlib.error) as error:
                 return self.error(400, "invalid_request_error", str(error) if isinstance(error, ValueError) else "Invalid gzip request body")
+            payload = limit_images(payload, config.max_image_chars)
             if route == "/v1/messages":
                 maximum = payload.get("max_tokens")
                 if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < 1:

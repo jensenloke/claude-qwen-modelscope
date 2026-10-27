@@ -36,7 +36,8 @@ class SetupTests(unittest.TestCase):
             data = json.loads((self.home / name / "settings.json").read_text())
             self.assertEqual(data["model"], "Qwen/fixture")
             self.assertEqual(data["alwaysThinkingEnabled"], thinking)
-            self.assertEqual(data["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000")
+            expected = {"983616", "991808"}  # window minus each profile's output cap
+            self.assertIn(data["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], expected)
             self.assertNotIn("ANTHROPIC_API_KEY", data["env"])
             self.assertFalse((self.home / name / ".claude.json").exists())
         self.assertEqual((self.home / ".config/claude-qwen/modelscope-api-key").stat().st_mode & 0o777, 0o600)

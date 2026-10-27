@@ -100,10 +100,16 @@ bypass/auto-approval. Add your own skills/MCPs deliberately after the first test
 
 Setup defaults to a **200,000-token client window**. For a model/endpoint verified
 to support 1M, rerun setup with `--context 1000000` and the same model/key options.
-It sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, leaving proactive compaction enabled
-and the upstream model ID unchanged. This tells Claude Code the expected window;
-it does not grant provider capacity. No full million-token request has been used
-to validate the limit. Restart after changing settings.
+It sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the window **minus each profile's
+output cap** (direct: −8,192; thinking: −16,384), because the gateway rejects any
+input longer than `window − max_tokens` — a 1M model with the 16,384 thinking
+output cap hard-fails requests above 983,616 input tokens. Claiming the full
+window leaves compaction starting after the gateway already refuses, and one
+oversized request kills the session unrecoverably (`/compact` itself needs a
+full-history call). Proactive compaction stays enabled and the upstream model
+ID is unchanged. This tells Claude Code the expected window; it does not grant
+provider capacity. No full million-token request has been used to validate the
+limit. Restart after changing settings.
 
 Direct mode explicitly disables thinking and caps output at 8,192 tokens.
 Thinking mode has a 4,096-token budget and 16,384-token output cap:
@@ -167,6 +173,13 @@ The adapter ends with the foreground CLI, verifies upstream TLS, refuses redirec
 and bounds bodies, connections, buffers and timeouts. It does not retry billable
 requests itself. Background/cloud/desktop launches are unsupported in this mode.
 No daemon is installed. See the code and fixture tests for the exact bounds.
+
+The thinking adapter also bounds images: any base64 image block above 120,000
+characters (~90 KB binary) is replaced in flight with an explicit placeholder
+telling the model to downscale first (e.g. `sips -Z 1024 -s format jpeg`).
+One full-resolution phone screenshot can exceed 100K input tokens and stays in
+the conversation history forever; a handful of them is enough to hit the input
+cap above. The direct route has no adapter, so downscale images yourself there.
 
 ## Troubleshooting and removal
 

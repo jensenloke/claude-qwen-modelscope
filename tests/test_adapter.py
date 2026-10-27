@@ -19,7 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from adapter import AdapterServer, Config, encode
+from adapter import AdapterServer, Config, encode, limit_images
 from protocol import ProtocolError, StreamRepair, normalize_message, sse_events
 
 
@@ -329,7 +329,44 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual([b["type"] for b in json.loads(raw)["content"]], ["thinking", "text"])
             self.assertEqual(json.loads(request(adapter, route="/v1/models", method="GET")[2])["data"][0]["id"], "test")
             self.assertEqual(json.loads(request(adapter, route="/v1/messages/count_tokens", payload={"model": "test"})[2]), {"input_tokens": 10})
+
             self.assertNotIn("thinking", fixture.requests[-1][2])
+
+    def test_oversized_images_are_elided_before_upstream(self):
+        big = "A" * 200000
+        small = "B" * 1000
+        payload = {"model": "test", "max_tokens": 8192, "stream": True, "messages": [
+            {"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": big}},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": small}},
+                {"type": "text", "text": "check"}]},
+            {"role": "user", "content": [
+                {"tool_use_id": "t1", "type": "tool_result", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": big}}]}]}]}
+        with servers() as (adapter, fixture):
+            self.assertEqual(request(adapter, payload=payload)[0], 200)
+        sent = fixture.requests[0][2]
+        blocks = [block for message in sent["messages"] for block in message["content"]
+                  if not isinstance(block.get("content"), list)]
+        for message in sent["messages"]:
+            for block in message["content"]:
+                if isinstance(block.get("content"), list):
+                    blocks.extend(block["content"])
+        self.assertNotIn(big, json.dumps(sent))
+        self.assertIn(small, json.dumps(sent))
+        elided = [block for block in blocks if block["type"] == "text" and "image elided" in block.get("text", "")]
+        self.assertEqual(len(elided), 2)
+        self.assertIn("200,000", elided[0]["text"])
+
+    def test_limit_images_preserves_structure_and_small_payloads(self):
+        nested = {"a": [{"type": "image", "source": {"type": "base64", "data": "x" * 10}}, 1, "keep"],
+                  "b": {"type": "text", "text": "untouched"}}
+        self.assertEqual(limit_images(nested, 100), nested)
+        oversized = {"type": "image", "source": {"type": "base64", "data": "x" * 101}}
+        replaced = limit_images([oversized], 100)
+        self.assertEqual(replaced[0]["type"], "text")
+        self.assertNotIn("x" * 101, json.dumps(replaced))
+
 
 
 class LifecycleTests(unittest.TestCase):
