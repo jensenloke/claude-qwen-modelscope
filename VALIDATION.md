@@ -28,3 +28,25 @@ The GitHub workflow runs fixture tests only, without provider secrets. Check its
   downscale-instruction placeholder before forwarding upstream.
 - 31 fixture tests passed on macOS (Python 3.15.0), including the two new image-budget tests
   and the updated setup clamp assertion. No live provider request was used.
+
+## Inline tool changes — 28 October 2026
+
+- Trigger: Claude Code sent a system notice containing named `tool_addition`
+  blocks. ModelScope rejected the block union with 422. Retries retained the
+  incompatible block in history.
+- A minimal synthetic request reproduced the provider's 422. The same request
+  through the deployed translation returned HTTP 200 with a message response.
+- On the Mac Mini (Python 3.14.7), the original affected notice and its two tool
+  definitions also returned HTTP 200 through the patched adapter. The private
+  transcript was not edited or added to this repo. This was a reduced request,
+  not a replay of the entire conversation or a resumed interactive session.
+- The portable suite passes 39 fixture tests on macOS (Python 3.15.0), including
+  eight inline-tool cases: a late system notice, definitions/removal/readdition,
+  unchanged ordinary history, token counting, unresolved references, malformed
+  or unsupported descriptors, schema replacement, and preservation of unrelated
+  blocks. Fixtures use no provider credentials.
+- CI now includes the minimum supported Python 3.10 as well as 3.11/3.13, and
+  permits manual workflow runs. Its result must be checked separately.
+- Scope: thinking-mode adapter only. Translation flattens current tool
+  availability; Anthropic's historical visibility/cache semantics, arbitrary
+  future block types and direct-mode feature parity are not established.

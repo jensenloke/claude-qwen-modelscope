@@ -54,6 +54,80 @@ def encode(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
 
 
+def normalize_tool_changes(payload):
+    """Translate Anthropic inline tool changes for ModelScope's older schema.
+
+    Keep notices at their original system-message position. Only the effective
+    tool catalog is flattened; the saved conversation is never edited.
+    """
+    if not isinstance(payload.get("messages", []), list) or not isinstance(payload.get("tools", []), list):
+        return payload  # Leave unrelated request validation to the provider.
+    tools = {tool["name"]: dict(tool) for tool in payload.get("tools", [])
+             if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+    removed, changed = set(), False
+    messages = []
+    for message in payload.get("messages", []):
+        if not isinstance(message, dict):
+            messages.append(message)
+            continue
+        content = message.get("content")
+        if message.get("role") != "system" or not isinstance(content, list):
+            messages.append(message)
+            continue
+        if not any(isinstance(block, dict) and block.get("type") in
+                   ("tool_addition", "tool_removal") for block in content):
+            messages.append(message)
+            continue
+        blocks = []
+        for block in content:
+            kind = block.get("type") if isinstance(block, dict) else None
+            if kind not in ("tool_addition", "tool_removal"):
+                blocks.append(block)
+                continue
+            tool = block.get("tool", {})
+            if not isinstance(tool, dict):
+                raise ValueError("Inline tool changes require a tool object")
+            if tool.get("type") == "tool_definition" and kind == "tool_addition":
+                definition = tool.get("definition", {})
+                if not isinstance(definition, dict):
+                    raise ValueError("Inline tool definitions require a definition object")
+                name = definition.get("name")
+                if not isinstance(name, str) or not name or not isinstance(definition.get("input_schema"), dict):
+                    raise ValueError("ModelScope inline tools require a named client tool with input_schema")
+                tools[name] = dict(definition)
+            elif tool.get("type") == "tool_reference":
+                name = tool.get("name")
+                if not isinstance(name, str) or name not in tools:
+                    raise ValueError("Inline tool reference has no definition in the request tools")
+            else:
+                raise ValueError("ModelScope does not support this inline tool reference type")
+            changed = True
+            if kind == "tool_removal":
+                removed.add(name)
+                notice = "Tool withdrawn: " + name
+            else:
+                removed.discard(name)
+                tools[name].pop("defer_loading", None)
+                notice = "Tool available: " + name
+            blocks.append({"type": "text", "text": notice})
+        # A plain string also works with gateways that only accept strings for
+        # system messages. Preserve any other content block rather than drop it.
+        if all(isinstance(b, dict) and b.get("type") == "text" for b in blocks):
+            blocks = "\n\n".join(b["text"] for b in blocks)
+        messages.append({**message, "content": blocks})
+    if not changed:
+        return payload
+    # Preserve unnamed provider tool entries and original catalog order.
+    catalog = []
+    for tool in payload.get("tools", []):
+        name = tool.get("name") if isinstance(tool, dict) else None
+        if name in removed:
+            continue
+        catalog.append(tools.pop(name) if name in tools else tool)
+    catalog.extend(tool for name, tool in tools.items() if name not in removed)
+    return {**payload, "messages": messages, "tools": catalog}
+
+
 def limit_images(value, max_chars):
     """Replace oversized base64 image blocks with an explicit text placeholder.
 
@@ -300,6 +374,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.error(413, "invalid_request_error", "Local request exceeded the 64 MiB body limit")
             except (ValueError, zlib.error) as error:
                 return self.error(400, "invalid_request_error", str(error) if isinstance(error, ValueError) else "Invalid gzip request body")
+            try:
+                payload = normalize_tool_changes(payload)
+            except ValueError as error:
+                return self.error(400, "invalid_request_error", str(error))
             payload = limit_images(payload, config.max_image_chars)
             if route == "/v1/messages":
                 maximum = payload.get("max_tokens")
