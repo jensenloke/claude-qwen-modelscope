@@ -181,10 +181,39 @@ One full-resolution phone screenshot can exceed 100K input tokens and stays in
 the conversation history forever; a handful of them is enough to hit the input
 cap above. The direct route has no adapter, so downscale images yourself there.
 
+### Tool changes and API compatibility
+
+New Claude Code releases can send message blocks that ModelScope's Anthropic
+endpoint does not yet accept. In particular, `tool_addition` and `tool_removal`
+system blocks can cause a persistent **422**: retrying resends the same block
+from history, even if the latest user message is ordinary text.
+
+The thinking adapter translates these blocks into system text at the same
+position and updates the effective top-level tool catalog. It resolves named
+references, promotes inline client definitions, and withholds removed tools.
+It preserves ordinary text, tool calls/results and saved transcripts. This
+flattens historical tool visibility for the current request; it does not emulate
+Anthropic's per-message tool visibility or cache layout. Unsupported inline
+reference types and missing definitions return explicit local errors.
+
+After updating this checkout, exit and resume the affected thinking session:
+
+```sh
+claude-qwen --thinking --resume YOUR_SESSION_ID
+```
+
+Direct mode bypasses the adapter and does not receive this translation. Existing
+private installations that copied `adapter.py` rather than using this repo's
+launcher must also update that deployed copy. See the
+[compatibility checklist](docs/compatibility.md) before upgrading either side.
+
 ## Troubleshooting and removal
 
 - **401/403:** check international endpoint, API key, model access and quota.
   Claude account login does not substitute for ModelScope credentials.
+- **422 mentioning `tool_addition` or `tool_removal`:** update the thinking
+  adapter, exit Claude Code and resume with `--thinking`. Repeated prompts or
+  `/compact` still resend the incompatible history through an old adapter.
 - **Unknown model/context warning:** use the exact ID and the documented custom
   context override; do not rename Qwen to a Claude model to hide the warning.
 - **Blank thinking answer:** use `--thinking` and its adapter, not the direct

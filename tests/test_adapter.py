@@ -19,7 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from adapter import AdapterServer, Config, encode, limit_images
+from adapter import AdapterServer, Config, encode, limit_images, normalize_tool_changes
 from protocol import ProtocolError, StreamRepair, normalize_message, sse_events
 
 
@@ -225,6 +225,96 @@ def request(adapter, payload=None, route="/v1/messages", headers=None, raw=None,
         response = error
     with response:
         return response.status, dict(response.headers), response.read()
+
+
+class InlineToolTests(unittest.TestCase):
+    def tool(self, name):
+        return {"name": name, "description": "fixture", "input_schema": {"type": "object"}, "defer_loading": True}
+
+    def change(self, kind, name):
+        return {"type": kind, "tool": {"type": "tool_reference", "name": name}}
+
+    def test_reported_system_notice_preserves_text_and_activates_tools(self):
+        notice = "Tools available. A file changed on disk; preserve it."
+        payload = {"model": "test", "max_tokens": 8192, "tools": [self.tool("Artifact"), self.tool("SendFeedback")],
+                   "messages": [{"role": "user", "content": "earlier"}] * 699 + [
+                       {"role": "system", "content": [{"type": "text", "text": notice},
+                        self.change("tool_addition", "Artifact"), self.change("tool_addition", "SendFeedback")]},
+                       {"role": "user", "content": "Continue with the task"}]}
+        original = encode(payload)
+        with servers(mode="json") as (adapter, fixture):
+            self.assertEqual(request(adapter, payload)[0], 200)
+            sent = fixture.requests[0][2]
+        self.assertIn(notice, sent["messages"][699]["content"])
+        self.assertIsInstance(sent["messages"][699]["content"], str)
+        self.assertEqual(sent["messages"][700], payload["messages"][700])
+        self.assertTrue(all("defer_loading" not in t for t in sent["tools"]))
+        self.assertEqual(encode(payload), original)
+
+    def test_inline_definition_removal_and_readdition(self):
+        definition = self.tool("NewTool")
+        payload = {"tools": [self.tool("OldTool")], "messages": [
+            {"role": "system", "content": [
+                {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": definition}},
+                self.change("tool_removal", "OldTool")]},
+            {"role": "system", "content": [self.change("tool_removal", "NewTool"), self.change("tool_addition", "NewTool")]}]}
+        sent = normalize_tool_changes(payload)
+        self.assertEqual([t["name"] for t in sent["tools"]], ["NewTool"])
+        self.assertEqual(sent["tools"][0]["input_schema"], definition["input_schema"])
+        self.assertNotIn("defer_loading", sent["tools"][0])
+
+    def test_ordinary_tool_history_and_images_are_untouched(self):
+        history = [{"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]},
+                   {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a", "content": "exact result"},
+                     {"type": "image", "source": {"type": "base64", "data": "fixture"}}]}]
+        payload = {"messages": history}
+        self.assertIs(normalize_tool_changes(payload), payload)
+
+    def test_count_tokens_uses_same_normalization(self):
+        payload = {"model": "test", "tools": [self.tool("Read")], "messages": [
+            {"role": "system", "content": [self.change("tool_addition", "Read")]}]}
+        with servers(mode="json") as (adapter, fixture):
+            self.assertEqual(request(adapter, payload, route="/v1/messages/count_tokens")[0], 200)
+            self.assertIsInstance(fixture.requests[0][2]["messages"][0]["content"], str)
+
+    def test_missing_definition_is_explicit_and_does_not_reach_upstream(self):
+        payload = {"model": "test", "max_tokens": 8192, "messages": [
+            {"role": "system", "content": [self.change("tool_addition", "Missing")]}]}
+        with servers() as (adapter, fixture):
+            status, _, raw = request(adapter, payload)
+            self.assertEqual(status, 400)
+            self.assertIn(b"no definition", raw)
+            self.assertEqual(fixture.requests, [])
+
+    def test_unsupported_and_malformed_inline_tools_fail_locally(self):
+        for descriptor in ("invalid", {"type": "tool_definition", "definition": None},
+                           {"type": "mcp_toolset_reference", "server_name": "fixture"}):
+            with self.subTest(descriptor=descriptor), servers(mode="json") as (adapter, fixture):
+                payload = {"model": "test", "max_tokens": 8192, "messages": [
+                    {"role": "system", "content": [{"type": "tool_addition", "tool": descriptor}]}]}
+                self.assertEqual(request(adapter, payload)[0], 400)
+                self.assertEqual(fixture.requests, [])
+
+    def test_latest_inline_schema_replaces_original_and_other_tools_stay_unchanged(self):
+        original = self.tool("Changed")
+        updated = {**original, "input_schema": {"type": "object", "required": ["new_arg"]}}
+        untouched = self.tool("Untouched")
+        payload = {"tools": [original, untouched], "messages": [
+            {"role": "system", "content": [{"type": "tool_addition", "tool": {
+                "type": "tool_definition", "definition": updated}}]}]}
+        sent = normalize_tool_changes(payload)
+        self.assertEqual(sent["tools"][0]["input_schema"], updated["input_schema"])
+        self.assertEqual(sent["tools"][1], untouched)
+        self.assertEqual(payload["tools"][0], original)
+
+    def test_unknown_content_and_non_system_messages_are_not_discarded(self):
+        unknown = {"type": "future_block", "value": "preserve"}
+        user = {"role": "user", "content": [self.change("tool_addition", "Read")]}
+        payload = {"tools": [self.tool("Read")], "messages": [user,
+            {"role": "system", "content": [unknown, self.change("tool_addition", "Read")]}]}
+        sent = normalize_tool_changes(payload)
+        self.assertIs(sent["messages"][0], user)
+        self.assertEqual(sent["messages"][1]["content"][0], unknown)
 
 
 class HTTPTests(unittest.TestCase):
