@@ -5,6 +5,8 @@ The `claude-qwen` command now defaults to `Qwen-Ambassador/Qwen4-Max`.
 Both plain and thinking modes use the compatibility adapter for stream repair,
 inline tool changes and image bounds.
 
+See the [release notes](CHANGELOG.md) for changes and verification details.
+
 You need a [ModelScope international account](https://www.modelscope.ai/) with
 inference access to the [Qwen Ambassador model](https://www.modelscope.ai/organization/Qwen-Ambassador?tab=model).
 A model appearing in the catalogue does not by itself establish your account's
