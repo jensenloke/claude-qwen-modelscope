@@ -3,7 +3,8 @@
 Claude Code and ModelScope evolve independently. A successful plain-text prompt
 does not establish support for tool discovery, tool changes, thinking streams,
 images, or a long conversation. The adapter and its fixture tests are the
-compatibility boundary for thinking mode; direct mode bypasses it.
+compatibility boundary for both plain and thinking modes. Plain mode explicitly
+disables thinking but retains the stream, tool-change and image handling.
 
 ## Known incidents
 
@@ -24,7 +25,8 @@ produce a local 400 instead of silently dropping tool availability.
 2. Run `python3 -m unittest discover -s tests -v`. GitHub Actions runs these
    fixtures on pushes and pull requests; it also supports manual runs.
 3. Run `claude-qwen doctor`, then optionally `claude-qwen doctor --live` for a
-   small direct-mode provider check. The live option consumes provider quota.
+   small plain-mode provider check. Use `claude-qwen doctor --live --thinking`
+   to check the other mode. The live option consumes provider quota.
 4. Separately exercise thinking mode with a small prompt, then a harmless tool
    read and a tool-discovery/change turn. Verify the final response and tool
    arguments, not just MCP connection status. Check a resumed session too.

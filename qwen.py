@@ -13,6 +13,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent
 UPSTREAM = "https://api-inference.modelscope.ai"
+DEFAULT_MODEL = "Qwen-Ambassador/Qwen4-Max"
 SECRET_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS")
 
 
@@ -65,13 +66,13 @@ def backup(paths):
 def configuration():
     path = state() / "config.json"
     if not path.exists():
-        raise ValueError("Run python3 qwen.py setup --model YOUR_MODEL_ID first")
+        raise ValueError("Run python3 qwen.py setup first (defaults to Qwen 4 Max)")
     return load(path)
 
 
 def setup(args):
     parser = argparse.ArgumentParser(description="Create independent Qwen profiles; never imports your main Claude account or MCP credentials")
-    parser.add_argument("--model", required=True, help="Exact ModelScope model ID your account can access")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Exact ModelScope model ID (default: Qwen-Ambassador/Qwen4-Max)")
     parser.add_argument("--context", type=int, default=200000, metavar="TOKENS")
     parser.add_argument("--claude", help="Claude Code executable (otherwise discovered on PATH)")
     parser.add_argument("--key-file", type=Path, help="Read your existing key file instead of a hidden prompt")
@@ -106,7 +107,9 @@ def setup(args):
         env.update({"ANTHROPIC_MODEL": options.model, "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(options.context - output_cap),
                     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(output_cap),
                     "CLAUDE_CODE_EXTRA_BODY": json.dumps({"thinking": {"type": "disabled"} if index == 0 else {"type": "enabled", "budget_tokens": 4096}}, separators=(",", ":"))})
-        for family in ("OPUS", "SONNET", "HAIKU"):
+        env["ANTHROPIC_DEFAULT_MODEL"] = options.model
+        env["CLAUDE_CODE_SUBAGENT_MODEL"] = options.model
+        for family in ("OPUS", "SONNET", "HAIKU", "FABLE"):
             env["ANTHROPIC_DEFAULT_" + family + "_MODEL"] = options.model
         settings.update({"model": options.model, "alwaysThinkingEnabled": bool(index)})
         settings.setdefault("permissions", {}).setdefault("defaultMode", "default")
@@ -167,6 +170,7 @@ def addon(name, args):
 def doctor(args):
     parser = argparse.ArgumentParser(description="Local readiness checks; --live makes one ModelScope request")
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--thinking", action="store_true", help="Use thinking mode for the live check")
     options = parser.parse_args(args)
     config = configuration()
     token(Path(config["key_file"]).read_text())
@@ -178,7 +182,7 @@ def doctor(args):
             raise ValueError("Profile model differs; rerun setup")
     print("Local configuration ready. Model: " + config["model"] + "; client context: " + str(config["context"]))
     if options.live:
-        return launch(["-p", "Reply exactly QWEN_CONNECTION_OK", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--max-turns", "1", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}'])
+        return launch((["--thinking"] if options.thinking else []) + ["-p", "Reply exactly QWEN_CONNECTION_OK", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--max-turns", "1", "--setting-sources", "user", "--settings", '{"disableAllHooks":true}'])
     return 0
 
 
@@ -192,8 +196,9 @@ def launch(args):
     for name in (*SECRET_ENV, "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
         env.pop(name, None)
     env.update({"CLAUDE_CONFIG_DIR": str(profiles()[1 if thinking else 0]), "ANTHROPIC_BASE_URL": UPSTREAM,
-                "ANTHROPIC_API_KEY": key, "CLAUDE_QWEN_CLAUDE_BIN": config["claude"]})
-    command = [sys.executable, str(ROOT / "adapter.py")] if thinking else [config["claude"]]
+                "ANTHROPIC_API_KEY": key, "CLAUDE_QWEN_CLAUDE_BIN": config["claude"],
+                "CLAUDE_QWEN_THINKING_MODE": "enabled" if thinking else "disabled"})
+    command = [sys.executable, str(ROOT / "adapter.py")]
     os.execvpe(command[0], command + args, env)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-session loopback adapter for claude-qwen --thinking. Python standard library only."""
+"""Per-session ModelScope compatibility adapter for both Claude Qwen modes."""
 import hmac
 from contextlib import contextmanager
 import json
@@ -37,6 +37,7 @@ class Config:
     client_token: str = field(repr=False)
     upstream_url: str = UPSTREAM
     budget: int = 4096
+    thinking_enabled: bool = True
     idle_timeout: float = 180
     total_timeout: float = 900
     client_timeout: float = 15
@@ -386,8 +387,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(payload.get("stream", False), bool):
                     return self.error(400, "invalid_request_error", "stream must be a boolean")
                 wants_stream = payload.get("stream", False)
-                payload["thinking"] = {"type": "enabled", "budget_tokens": config.budget}
-                payload["max_tokens"] = max(maximum, config.budget + 1024)
+                payload["thinking"] = ({"type": "enabled", "budget_tokens": config.budget}
+                                       if config.thinking_enabled else {"type": "disabled"})
+                payload["max_tokens"] = max(maximum, config.budget + 1024) if config.thinking_enabled else maximum
         headers = {"x-api-key": config.upstream_key, "Content-Type": "application/json",
                    "anthropic-version": self.headers.get("anthropic-version", "2023-06-01"),
                    "Accept-Encoding": "identity"}
@@ -462,10 +464,10 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
-def thinking_profile(home):
-    profile = home / ".claude-qwen-thinking"
+def session_profile(home, thinking):
+    profile = home / (".claude-qwen-thinking" if thinking else ".claude-qwen")
     if not (profile / "settings.json").is_file():
-        raise ValueError("Thinking profile is missing; restore ~/.claude-qwen-thinking/settings.json")
+        raise ValueError("Qwen profile is missing; rerun claude-qwen setup")
     return profile
 
 
@@ -526,24 +528,25 @@ def main(args):
     try:
         options = args[:args.index("--")] if "--" in args else args
         if any(option in ("--bg", "--background", "--cloud", "--desktop") or option.startswith(("--bg=", "--background=", "--cloud=", "--desktop=")) for option in options):
-            raise ValueError("Thinking mode requires a foreground CLI session; background, cloud, and desktop modes cannot use its temporary adapter")
+            raise ValueError("The compatibility adapter requires a foreground CLI session; background, cloud, and desktop modes cannot use its temporary route")
+        thinking = os.environ.get("CLAUDE_QWEN_THINKING_MODE", "enabled") == "enabled"
         try:
-            budget = int(os.environ.get("CLAUDE_QWEN_THINKING_BUDGET", "4096"))
+            budget = int(os.environ.get("CLAUDE_QWEN_THINKING_BUDGET", "4096")) if thinking else 4096
         except ValueError:
             raise ValueError("CLAUDE_QWEN_THINKING_BUDGET must be an integer") from None
         if not 1024 <= budget <= 15360:
             raise ValueError("CLAUDE_QWEN_THINKING_BUDGET must be between 1024 and 15360")
         key = os.environ.pop("ANTHROPIC_API_KEY", "").strip()
         if not key or any(char.isspace() for char in key):
-            raise ValueError("Missing ModelScope key; launch with claude-qwen --thinking")
+            raise ValueError("Missing ModelScope key; launch with claude-qwen")
         home = Path.home()
-        profile = thinking_profile(home)
-        return run_session(args, Config(key, secrets.token_urlsafe(32), budget=budget),
+        profile = session_profile(home, thinking)
+        return run_session(args, Config(key, secrets.token_urlsafe(32), budget=budget, thinking_enabled=thinking),
                            profile, Path(os.environ["CLAUDE_QWEN_CLAUDE_BIN"]))
     except (ValueError, OSError) as error:
         # All ValueErrors originate in our own configuration validation.
         message = str(error) if isinstance(error, ValueError) else "Unable to start the local adapter or Claude Code"
-        print("claude-qwen --thinking: " + message, file=sys.stderr)
+        print("claude-qwen: " + message, file=sys.stderr)
         return 1
 
 
