@@ -318,6 +318,19 @@ class InlineToolTests(unittest.TestCase):
 
 
 class HTTPTests(unittest.TestCase):
+    def test_plain_mode_repairs_inline_tools_without_enabling_thinking(self):
+        payload = {"model": "Qwen-Ambassador/Qwen4-Max", "max_tokens": 128,
+                   "tools": [{"name": "Read", "input_schema": {"type": "object"}}],
+                   "messages": [{"role": "system", "content": [
+                       {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "Read"}}]}]}
+        with servers(mode="json", thinking_enabled=False) as (adapter, fixture):
+            self.assertEqual(request(adapter, payload)[0], 200)
+            sent = fixture.requests[0][2]
+            self.assertEqual(sent["thinking"], {"type": "disabled"})
+            self.assertEqual(sent["max_tokens"], 128)
+            self.assertIsInstance(sent["messages"][0]["content"], str)
+            self.assertEqual(sent["tools"][0]["name"], "Read")
+
     def test_live_http_repair_and_fixed_upstream_auth(self):
         with servers() as (adapter, fixture):
             status, _, raw = request(adapter)

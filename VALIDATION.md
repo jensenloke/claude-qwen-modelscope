@@ -1,4 +1,34 @@
-# Verification — 26 October 2026
+# Verification
+
+## Qwen 4 Max migration — 26 November 2026
+
+- Model: `Qwen-Ambassador/Qwen4-Max`, using ModelScope's international Anthropic
+  Messages endpoint. macOS, Python 3.15.0, Claude Code 2.1.332.
+- 43 disposable-fixture tests passed. New coverage includes Qwen4 as the setup
+  default, removal of stale model aliases during an upgrade, preservation of
+  existing resources/history, plain-mode inline-tool repair without thinking,
+  local credential scoping in both modes, and both live-doctor mode selections.
+- The repository's installer replaced an existing local launcher and upgraded
+  both existing Qwen profiles to Qwen4. Profile instructions and MCP
+  registrations were checked unchanged. Skills, commands and histories were
+  retained; no account credential or private profile was added to this repo.
+- Both installed launch modes passed `doctor --live`, then native
+  Read → Edit → Read exercises on disposable files. Changed contents and
+  unpredictable fixture markers were independently checked.
+- New sessions in both modes were resumed through the installed launcher and
+  successfully read back the expected fixture markers. An initial resume test
+  accidentally inherited its Python driver's stdin; it was discarded and
+  rerun with isolated stdin and bounded turns.
+- Plain-mode transcripts contained no thinking blocks; thinking-mode transcripts
+  contained thinking blocks. Both modes now use the same compatibility adapter.
+- A small synthetic image returned the correct code and color through the raw
+  Anthropic endpoint. A native Claude Read-image attempt did not complete during
+  its bounded observation and was stopped; native screenshot/browser image
+  workflows are not qualified by this migration. No full-1M request was run.
+- Live requests used an existing authorized account. Fixture CI uses no provider
+  credentials; its GitHub result must be checked separately.
+
+# Earlier verification — 26 October 2026
 
 ## Portable package, disposable home on macOS
 

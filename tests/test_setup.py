@@ -43,16 +43,56 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((self.home / ".config/claude-qwen/modelscope-api-key").stat().st_mode & 0o777, 0o600)
         self.assertTrue((self.home / ".local/bin/claude-qwen").is_symlink())
 
-    def test_direct_routing_clears_conflicting_credentials_and_preserves_arguments(self):
+    def test_plain_routing_uses_adapter_and_preserves_arguments(self):
         self.setup()
         r = self.run_cli("-p", "a prompt with spaces")
         self.assertEqual(r.returncode, 0, r.stderr)
         d = json.loads(r.stdout)
         self.assertEqual(d["args"], ["-p", "a prompt with spaces"])
-        self.assertEqual(d["api_key"], "disposable-modelscope-fixture")
-        self.assertIsNone(d["auth"])
+        self.assertIsNone(d["api_key"])
+        self.assertTrue(d["auth"])
+        self.assertNotEqual(d["auth"], "conflicting-fixture")
         self.assertIsNone(d["bedrock"])
-        self.assertEqual(d["base"], "https://api-inference.modelscope.ai")
+        self.assertTrue(d["base"].startswith("http://127.0.0.1:"))
+        self.assertEqual(d["profile"], str(self.home / ".claude-qwen"))
+
+    def test_setup_defaults_to_qwen4(self):
+        r = self.run_cli("setup", "--claude", str(self.cli), "--key-file", str(self.key))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for profile in (".claude-qwen", ".claude-qwen-thinking"):
+            d = json.loads((self.home / profile / "settings.json").read_text())
+            self.assertEqual(d["model"], "Qwen-Ambassador/Qwen4-Max")
+
+    def test_upgrade_replaces_all_old_model_aliases_and_preserves_resources(self):
+        self.setup()
+        for name in (".claude-qwen", ".claude-qwen-thinking"):
+            profile = self.home / name
+            settings = json.loads((profile / "settings.json").read_text())
+            for key in ("ANTHROPIC_DEFAULT_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"):
+                settings["env"][key] = "Qwen-Ambassador/Qwen3.8-Max"
+            settings["theme"] = "dark"
+            (profile / "settings.json").write_text(json.dumps(settings))
+            (profile / "CLAUDE.md").write_text("Keep my customizations")
+            (profile / "history.jsonl").write_text("existing fixture history\n")
+        r = self.run_cli("setup", "--claude", str(self.cli), "--key-file", str(self.key))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name in (".claude-qwen", ".claude-qwen-thinking"):
+            profile = self.home / name
+            settings = json.loads((profile / "settings.json").read_text())
+            self.assertNotIn("Qwen3.8", json.dumps(settings))
+            self.assertEqual(settings["theme"], "dark")
+            self.assertEqual((profile / "CLAUDE.md").read_text(), "Keep my customizations")
+            self.assertEqual((profile / "history.jsonl").read_text(), "existing fixture history\n")
+        self.assertTrue(list((self.home / ".config/claude-qwen/backups").iterdir()))
+
+    def test_doctor_can_check_both_modes(self):
+        self.setup()
+        for extra, profile in [((), ".claude-qwen"), (("--thinking",), ".claude-qwen-thinking")]:
+            r = self.run_cli("doctor", "--live", *extra)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            d = json.loads(r.stdout.splitlines()[-1])
+            self.assertEqual(d["profile"], str(self.home / profile))
+            self.assertIsNone(d["api_key"])
 
     def test_thinking_uses_discovered_executable_and_ephemeral_local_auth(self):
         self.setup()

@@ -29,7 +29,7 @@ remote-debugging port on your network or copy a logged-in browser profile to sha
 This is **not a working browser bridge for the ModelScope API-key profile**.
 Anthropic's current docs require `/login` with a direct Pro, Max, Team or Enterprise
 plan and keep Chrome integration off for API-key sessions, even with `--chrome`.
-The thinking adapter does not bypass that account requirement.
+The compatibility adapter does not bypass that account requirement.
 
 To use it separately in your regular Claude session:
 
