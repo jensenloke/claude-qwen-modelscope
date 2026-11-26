@@ -14,8 +14,8 @@
   during recovery, creating a saved summary of 18,428 characters. The recovered
   session then resumed successfully through the normal thinking-mode launcher,
   with 17,839 reported input tokens. The original session file was untouched.
-- 46 disposable-fixture tests pass locally; `git diff --check` passes. These new
-  changes have not yet been pushed or checked by GitHub Actions. This check does
+- 46 disposable-fixture tests pass locally; `git diff --check` passes. GitHub
+  Actions results are separate from these local checks. This check does
   not establish automatic compaction reliability for every upstream response.
 
 ## Qwen 4 Max migration — 26 November 2026
