@@ -2,6 +2,16 @@
 
 ## Unreleased — 2026-11-26
 
+### Compaction recovery
+
+- Preserve explicit no-tool requests when translating historical inline tool
+  definitions, so compaction cannot accidentally restore executable tools.
+- Separate user instructions from sibling tool results before forwarding to
+  ModelScope. A live synthetic request reproduced an ignored trailing instruction
+  and confirmed that separation restores it. Conversation files are not rewritten.
+- Added regression coverage for empty tool catalogs, block order, image and
+  tool-result preservation, and unchanged ordinary messages.
+
 ### Qwen 4 Max support
 
 - `claude-qwen` now defaults to `Qwen-Ambassador/Qwen4-Max` on ModelScope.

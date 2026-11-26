@@ -249,6 +249,12 @@ repo's launcher must also update that deployed copy. See the
   context override; do not rename Qwen to a Claude model to hide the warning.
 - **Blank thinking answer:** start with `claude-qwen --thinking` so the adapter
   selects the fixed-budget mode. Recheck the provider stream if upstream behavior changes.
+- **Compaction says “summarization produced empty response”:** update this checkout
+  and restart using `claude-qwen --thinking --resume SESSION_ID` (omit `--thinking`
+  for a plain-mode session). Run `/compact` again. The adapter keeps summary
+  instructions separate from preceding tool results and respects the compactor's
+  empty tool catalog. Existing history is preserved; `/clear` discards active
+  context and should not be the first recovery step.
 - **MCP says Connected but a call fails:** check that service's key/quota, executable
   requirements and actual tool result; a handshake proves discovery only.
 - **Moved checkout or Claude executable:** rerun setup from the new checkout and

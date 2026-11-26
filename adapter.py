@@ -65,6 +65,9 @@ def normalize_tool_changes(payload):
         return payload  # Leave unrelated request validation to the provider.
     tools = {tool["name"]: dict(tool) for tool in payload.get("tools", [])
              if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+    # Compaction explicitly sends tools=[] while retaining historical inline
+    # definitions. Translate those notices without re-enabling executable tools.
+    no_tools = payload.get("tools") == []
     removed, changed = set(), False
     messages = []
     for message in payload.get("messages", []):
@@ -98,7 +101,7 @@ def normalize_tool_changes(payload):
                 tools[name] = dict(definition)
             elif tool.get("type") == "tool_reference":
                 name = tool.get("name")
-                if not isinstance(name, str) or name not in tools:
+                if not isinstance(name, str) or not name or (not no_tools and name not in tools):
                     raise ValueError("Inline tool reference has no definition in the request tools")
             else:
                 raise ValueError("ModelScope does not support this inline tool reference type")
@@ -108,7 +111,8 @@ def normalize_tool_changes(payload):
                 notice = "Tool withdrawn: " + name
             else:
                 removed.discard(name)
-                tools[name].pop("defer_loading", None)
+                if name in tools:
+                    tools[name].pop("defer_loading", None)
                 notice = "Tool available: " + name
             blocks.append({"type": "text", "text": notice})
         # A plain string also works with gateways that only accept strings for
@@ -125,8 +129,41 @@ def normalize_tool_changes(payload):
         if name in removed:
             continue
         catalog.append(tools.pop(name) if name in tools else tool)
-    catalog.extend(tool for name, tool in tools.items() if name not in removed)
+    if not no_tools:
+        catalog.extend(tool for name, tool in tools.items() if name not in removed)
     return {**payload, "messages": messages, "tools": catalog}
+
+
+def separate_tool_results(payload):
+    """Keep user instructions outside ModelScope tool-result messages.
+
+    ModelScope ignores sibling text in a user message containing tool_result.
+    Claude appends compaction instructions in exactly that position. Split
+    consecutive block runs without changing content, IDs, or their order.
+    """
+    if not isinstance(payload.get("messages", []), list):
+        return payload
+    messages, changed = [], False
+    for message in payload.get("messages", []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if (not isinstance(message, dict) or message.get("role") != "user"
+                or not isinstance(content, list)
+                or not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+                or not any(isinstance(b, dict) and b.get("type") == "text" for b in content)):
+            messages.append(message)
+            continue
+        changed = True
+        run, previous = [], None
+        for block in content:
+            is_result = isinstance(block, dict) and block.get("type") == "tool_result"
+            if previous is not None and previous != is_result:
+                messages.append({**message, "content": run})
+                run = []
+            previous = is_result
+            run.append(block)
+        if run:
+            messages.append({**message, "content": run})
+    return {**payload, "messages": messages} if changed else payload
 
 
 def limit_images(value, max_chars):
@@ -376,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, zlib.error) as error:
                 return self.error(400, "invalid_request_error", str(error) if isinstance(error, ValueError) else "Invalid gzip request body")
             try:
-                payload = normalize_tool_changes(payload)
+                payload = separate_tool_results(normalize_tool_changes(payload))
             except ValueError as error:
                 return self.error(400, "invalid_request_error", str(error))
             payload = limit_images(payload, config.max_image_chars)

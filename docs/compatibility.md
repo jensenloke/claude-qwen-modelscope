@@ -13,11 +13,19 @@ disables thinking but retains the stream, tool-change and image handling.
 | Empty thinking answer | Thinking deltas emitted inside a text block | `ProtocolTests` stream and non-stream repair cases |
 | Context-length 400 after screenshots | Output reserve and oversized base64 images consume the input window | Setup clamp and image-budget tests |
 | Persistent 422 when tools appear mid-session | ModelScope rejects Anthropic `tool_addition` / `tool_removal` content blocks | `InlineToolTests`, including a notice after 699 messages, both Messages and token-count routes |
+| Compaction returns an empty summary or a tool call | User instructions beside tool results are ignored; historical inline definitions can restore tools despite `tools=[]` | Mixed-result separation and empty-tool compaction fixtures in `InlineToolTests` |
 
 The inline-tool translation keeps notices in their original system-message
 position and derives the current tool catalog from additions/removals. It does
 not rewrite saved history. Missing definitions or unsupported inline references
 produce a local 400 instead of silently dropping tool availability.
+
+Explicit `tools=[]` keeps historical notices as context without restoring
+executable tools. User messages mixing tool results and text are split into
+consecutive messages, preserving block contents, call IDs and order. A live
+synthetic check confirmed that the same trailing instruction was ignored in a
+mixed message and followed after separation. This also affects instructions
+other than summaries.
 
 ## Upgrade checks
 

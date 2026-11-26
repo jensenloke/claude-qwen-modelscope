@@ -19,7 +19,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from adapter import AdapterServer, Config, encode, limit_images, normalize_tool_changes
+from adapter import AdapterServer, Config, encode, limit_images, normalize_tool_changes, separate_tool_results
 from protocol import ProtocolError, StreamRepair, normalize_message, sse_events
 
 
@@ -228,6 +228,25 @@ def request(adapter, payload=None, route="/v1/messages", headers=None, raw=None,
 
 
 class InlineToolTests(unittest.TestCase):
+    def test_user_instructions_after_tool_results_reach_separate_messages(self):
+        result = {"type": "tool_result", "tool_use_id": "fixture", "content": "Exact output", "is_error": True}
+        instruction = {"type": "text", "text": "Summarize instead of retrying."}
+        image = {"type": "image", "source": {"type": "base64", "data": "fixture"}}
+        payload = {"model": "test", "max_tokens": 128, "messages": [
+            {"role": "user", "content": [result, instruction, image, result, instruction]}]}
+        original = encode(payload)
+        with servers(mode="json") as (adapter, fixture):
+            self.assertEqual(request(adapter, payload)[0], 200)
+            sent = fixture.requests[0][2]
+        self.assertEqual([m["content"] for m in sent["messages"]],
+                         [[result], [instruction, image], [result], [instruction]])
+        self.assertEqual(encode(payload), original)
+
+    def test_standalone_tool_results_and_plain_messages_are_unchanged(self):
+        for content in ([{"type": "tool_result", "tool_use_id": "fixture", "content": "output"}], "Hello"):
+            payload = {"messages": [{"role": "user", "content": content}]}
+            self.assertIs(separate_tool_results(payload), payload)
+
     def tool(self, name):
         return {"name": name, "description": "fixture", "input_schema": {"type": "object"}, "defer_loading": True}
 
@@ -262,6 +281,21 @@ class InlineToolTests(unittest.TestCase):
         self.assertEqual([t["name"] for t in sent["tools"]], ["NewTool"])
         self.assertEqual(sent["tools"][0]["input_schema"], definition["input_schema"])
         self.assertNotIn("defer_loading", sent["tools"][0])
+
+    def test_compaction_does_not_reenable_historical_tools(self):
+        payload = {"model": "test", "max_tokens": 8192, "tools": [], "messages": [
+            {"role": "system", "content": [
+                {"type": "tool_addition", "tool": {"type": "tool_definition", "definition": self.tool("Bash")}},
+                self.change("tool_addition", "HistoricalRead")]},
+            {"role": "user", "content": "Summarize the conversation. Do not call tools."}]}
+        original = encode(payload)
+        with servers(mode="json") as (adapter, fixture):
+            self.assertEqual(request(adapter, payload)[0], 200)
+            sent = fixture.requests[0][2]
+        self.assertEqual(sent["tools"], [])
+        self.assertIn("Tool available: Bash", sent["messages"][0]["content"])
+        self.assertEqual(sent["messages"][1], payload["messages"][1])
+        self.assertEqual(encode(payload), original)
 
     def test_ordinary_tool_history_and_images_are_untouched(self):
         history = [{"role": "assistant", "content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {}}]},
