@@ -130,16 +130,17 @@ change. There is no automatic fallback to Qwen 3.8.
 Setup defaults to a **200,000-token client window**. For a model/endpoint verified
 to support 1M, rerun setup with `--context 1000000` and the same model/key options.
 It sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the window **minus each profile's
-output cap** (plain: −8,192; thinking: −16,384). This keeps an output reserve
-before proactive compaction: at a 1M configured window, the thinking profile's
+output cap** (−16,384 in both modes). This keeps an output reserve
+before proactive compaction: at a 1M configured window, each profile's
 client input budget is 983,616. Earlier Qwen 3.8 gateway requests failed above
 that input length. The reserve is retained for Qwen 4, but a full million-token
 request and the exact Qwen 4 gateway boundary have not been tested. The upstream
 model ID is unchanged; a client setting does not grant provider capacity.
 Restart after changing settings.
 
-Plain mode explicitly disables thinking and caps output at 8,192 tokens.
-Thinking mode has a 4,096-token budget and 16,384-token output cap:
+Plain mode explicitly disables thinking. Both modes cap output at 16,384 tokens;
+the earlier 8,192 plain cap truncated large single tool inputs mid-call.
+Thinking mode has a 4,096-token thinking budget within that cap:
 
 ```sh
 CLAUDE_QWEN_THINKING_BUDGET=8192 claude-qwen --thinking
@@ -249,6 +250,12 @@ repo's launcher must also update that deployed copy. See the
   context override; do not rename Qwen to a Claude model to hide the warning.
 - **Blank thinking answer:** start with `claude-qwen --thinking` so the adapter
   selects the fixed-budget mode. Recheck the provider stream if upstream behavior changes.
+- **Compaction says “summarization produced empty response”:** update this checkout
+  and restart using `claude-qwen --thinking --resume SESSION_ID` (omit `--thinking`
+  for a plain-mode session). Run `/compact` again. The adapter keeps summary
+  instructions separate from preceding tool results and respects the compactor's
+  empty tool catalog. Existing history is preserved; `/clear` discards active
+  context and should not be the first recovery step.
 - **MCP says Connected but a call fails:** check that service's key/quota, executable
   requirements and actual tool result; a handshake proves discovery only.
 - **Moved checkout or Claude executable:** rerun setup from the new checkout and

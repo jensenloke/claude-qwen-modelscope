@@ -1,5 +1,23 @@
 # Verification
 
+## Qwen 4 compaction recovery — 26 November 2026
+
+- Reproduced `summarization produced empty response` on a fork of an affected
+  session. Qwen returned a tool call instead of summary text. Disabling thinking
+  alone and requesting `tool_choice: none` did not resolve it.
+- A small synthetic live request showed that a text instruction beside a
+  `tool_result` was ignored. Splitting the same blocks into consecutive user
+  messages returned the exact requested marker.
+- The adapter now splits mixed tool-result/instruction messages and preserves
+  explicit `tools=[]` instead of restoring tools from historical definitions.
+- A full affected-history fork compacted successfully with thinking disabled
+  during recovery, creating a saved summary of 18,428 characters. The recovered
+  session then resumed successfully through the normal thinking-mode launcher,
+  with 17,839 reported input tokens. The original session file was untouched.
+- 46 disposable-fixture tests pass locally; `git diff --check` passes. GitHub
+  Actions results are separate from these local checks. This check does
+  not establish automatic compaction reliability for every upstream response.
+
 ## Qwen 4 Max migration — 26 November 2026
 
 - Model: `Qwen-Ambassador/Qwen4-Max`, using ModelScope's international Anthropic
