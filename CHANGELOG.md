@@ -2,6 +2,17 @@
 
 ## Unreleased — 2026-11-26
 
+### Output cap raised to 16,384 in both modes
+
+- The plain profile's 8,192-token output cap truncated large single Write calls
+  mid-tool-input (`stop_reason=max_tokens`), dropping required parameters such as
+  `file_path` and surfacing as InputValidationError loops. Both profiles now cap
+  output at 16,384 tokens; the context reserve is 16,384 in both modes
+  (983,616 client input at `--context 1000000`).
+- Existing installs: rerun setup with the same key/context options, or edit
+  `CLAUDE_CODE_MAX_OUTPUT_TOKENS` and `CLAUDE_CODE_MAX_CONTEXT_TOKENS` in each
+  profile's settings.json, then restart sessions.
+
 ### Compaction recovery
 
 - Preserve explicit no-tool requests when translating historical inline tool
